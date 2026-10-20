@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>اتاق سوندر</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1a33; font-family: Tahoma, Vazirmatn, sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #scene { position: fixed; inset: 0; }
+  #bubble {
+    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+    transform: translateX(-50%) translateY(10px);
+    max-width: 88%; padding: 12px 18px; border-radius: 18px;
+    background: rgba(255,255,255,0.94); color: #1d2a4a; font-size: 16px; line-height: 1.7;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25); opacity: 0; transition: opacity .35s, transform .35s;
+    pointer-events: none; text-align: center; z-index: 5;
+  }
+  #bubble.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #name {
+    position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); right: 14px;
+    padding: 6px 14px; border-radius: 999px; background: rgba(20,30,60,0.6);
+    color: #fff; font-size: 14px; z-index: 5; pointer-events: none;
+  }
+  #hint {
+    position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 14px;
+    padding: 6px 12px; border-radius: 999px; background: rgba(20,30,60,0.5);
+    color: #cfe3ff; font-size: 12px; z-index: 5; pointer-events: none; transition: opacity 1s;
+  }
+  #actions {
+    position: fixed; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); left: 0; right: 0;
+    display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; z-index: 6; padding: 0 10px;
+  }
+  #actions button {
+    border: none; border-radius: 14px; padding: 10px 14px; font-size: 14px;
+    background: rgba(255,255,255,0.92); color: #1d2a4a; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
+  #actions button:active { transform: scale(0.96); }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<div id="name">سوندر</div>
+<div id="hint">به کف اتاق بزن تا سوندر بره</div>
+<div id="bubble"></div>
+<div id="actions">
+  <button data-act="sit">نشستن</button>
+  <button data-act="sleep">خوابیدن</button>
+  <button data-act="wardrobe">کمد</button>
+  <button data-act="wave">سلام</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  const sceneEl = document.getElementById('scene');
+  const bubble = document.getElementById('bubble');
+  const hint = document.getElementById('hint');
+
+  // ---------- Renderer / scene ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  sceneEl.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x9fd3ff);
+  scene.fog = new THREE.Fog(0x9fd3ff, 14, 30);
+
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 6.2, 8.5);
+  camera.lookAt(0, 1, 0);
+
+  // ---------- Lights ----------
+  scene.add(new THREE.HemisphereLight(0xdff1ff, 0x5a6f9a, 0.9));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(-4, 9, 4);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.left = -8; sun.shadow.camera.right = 8;
+  sun.shadow.camera.top = 8; sun.shadow.camera.bottom = -8;
+  scene.add(sun);
+
+  // ---------- Materials ----------
+  const mat = (color, opts = {}) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.7, metalness: 0.02 }, opts));
+  const M = {
+    floor: mat(0x7fb6e8),
+    wall: mat(0xb9dcff),
+    wallTrim: mat(0xffffff),
+    wood: mat(0xc98b5a),
+    woodDark: mat(0x8a5a36),
+    bed: mat(0xffffff),
+    blanket: mat(0x6fa8ff),
+    pillow: mat(0xffffff),
+    glass: mat(0xd9f2ff, { transparent: true, opacity: 0.55, roughness: 0.1 }),
+    sky: mat(0x8fd0ff, { emissive: 0x3f8fd0, emissiveIntensity: 0.4 }),
+    cloud: mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.2 }),
+    rug: mat(0xe9f3ff),
+    catBody: mat(0x555b6e),
+    catDark: mat(0x2f3445),
+    plushBlue: mat(0x3a7fd6),
+    plushFace: mat(0xf1e4cf),
+    hair: mat(0x1d2550),
+    hairLight: mat(0x2e3a78),
+    skin: mat(0xffe0cc),
+    eye: mat(0x2b2b40),
+    blush: mat(0xff9bb3, { transparent: true, opacity: 0.6 }),
+    dress: mat(0x4a7ad8),
+    dressTrim: mat(0xffffff),
+    skirt: mat(0x2b3f7a),
+    shoe: mat(0x222a44),
+    mirror: mat(0xe6f6ff, { roughness: 0.05, metalness: 0.3 }),
+    lamp: mat(0xfff3c4, { emissive: 0xffd98a, emissiveIntensity: 0.6 }),
+    book: mat(0xff8fa3),
+    book2: mat(0xffe27a),
+    star: mat(0xffe27a, { emissive: 0xffd34d, emissiveIntensity: 0.5 })
+  };
+
+  function box(w, h, d, material, x, y, z) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    scene.add(m);
+    return m;
+  }
+
+  // ---------- Room ----------
+  const ROOM = 10;
+  const floor = box(ROOM, 0.2, ROOM, M.floor, 0, -0.1, 0);
+  floor.userData.floor = true;
+  box(ROOM, 4.5, 0.2, M.wall, 0, 2.25, -ROOM / 2);       // back wall
+  box(0.2, 4.5, ROOM, M.wall, -ROOM / 2, 2.25, 0);       // left wall
+  box(ROOM, 0.25, 0.1, M.wallTrim, 0, 0.12, -ROOM / 2 + 0.12); // skirting
+  const rug = box(3.6, 0.04, 2.4, M.rug, 0.5, 0.02, 1.6);
+  rug.receiveShadow = true;
+
+  // Window on back wall with sky and cloud
+  const windowGroup = new THREE.Group();
+  windowGroup.position.set(-1.5, 2.4, -ROOM / 2 + 0.12);
+  scene.add(windowGroup);
+  const winFrame = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.2, 0.1), M.wallTrim);
+  windowGroup.add(winFrame);
+  const winGlass = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 1.9), M.sky);
+  winGlass.position.z = 0.06;
+  windowGroup.add(winGlass);
+  const cloud = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), M.cloud);
+  cloud.position.set(-0.5, 0.2, 0.08); cloud.scale.set(1.6, 0.8, 0.6);
+  windowGroup.add(cloud);
+  const cloud2 = cloud.clone(); cloud2.position.set(0.5, -0.3, 0.08); cloud2.scale.set(1.2, 0.6, 0.6);
+  windowGroup.add(cloud2);
+  const winBar = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.9, 0.12), M.wallTrim);
+  windowGroup.add(winBar);
+
+  // Star decorations on wall
+  for (let i = 0; i < 6; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), M.star);
+    s.position.set(2.5 + (i % 3) * 0.6, 3 + Math.floor(i / 3) * 0.6, -ROOM / 2 + 0.15);
+    scene.add(s);
+  }
+
+  // ---------- Furniture ----------
+  // Bed
+  const bed = new THREE.Group();
+  bed.position.set(3.2, 0, -2.8);
+  scene.add(bed);
+  const addTo = (g, mesh) => { mesh.castShadow = true; mesh.receiveShadow = true; g.add(mesh); return mesh; };
+  addTo(bed, new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.5, 3.4), M.wood)).position.y = 0.25;
+  addTo(bed, new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.35, 3.1), M.bed)).position.y = 0.67;
+  addTo(bed, new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 2.0), M.blanket)).position.set(0, 0.9, 0.5);
+  addTo(bed, new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 0.2), M.woodDark)).position.set(0, 1.0, -1.6);
+  addTo(bed, new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.22, 0.6), M.pillow)).position.set(-0.5, 0.92, -1.2);
+  addTo(bed, new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.22, 0.6), M.pillow)).position.set(0.5, 0.92, -1.2);
+
+  // Desk
+  const desk = new THREE.Group();
+  desk.position.set(-3.2, 0, -3.8);
+  scene.add(desk);
+  addTo(desk, new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.15, 1.1), M.wood)).position.y = 1.0;
+  [[-1, -0.45], [1, -0.45], [-1, 0.45], [1, 0.45]].forEach(([x, z]) => {
+    addTo(desk, new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.0, 0.12), M.woodDark)).position.set(x * 0.95, 0.5, z);
+  });
+  const lampBase = addTo(desk, new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 0.1, 16), M.woodDark));
+  lampBase.position.set(0.7, 1.12, -0.2);
+  const lampShade = addTo(desk, new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.3, 16, 1, true), M.lamp));
+  lampShade.position.set(0.7, 1.3, -0.2);
+  const books = addTo(desk, new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.35), M.book));
+  books.position.set(-0.5, 1.13, 0.1);
+  addTo(desk, new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.1, 0.32), M.book2)).position.set(-0.5, 1.23, 0.1);
+
+  // Wardrobe (door opens on tap)
+  const wardrobe = new THREE.Group();
+  wardrobe.position.set(-4.2, 0, 1.8);
+  wardrobe.rotation.y = Math.PI / 2;
+  scene.add(wardrobe);
+  addTo(wardrobe, new THREE.Mesh(new THREE.BoxGeometry(2.0, 3.2, 1.2), M.wood)).position.set(0, 1.6, 0);
+  const doorPivot = new THREE.Group();
+  doorPivot.position.set(-0.5, 0, 0.61);
+  wardrobe.add(doorPivot);
+  const door = addTo(doorPivot, new THREE.Mesh(new THREE.BoxGeometry(1.0, 3.0, 0.08), M.woodDark));
+  door.position.set(0.5, 1.6, 0);
+  const handle = addTo(doorPivot, new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), M.star));
+  handle.position.set(0.9, 1.6, 0.08);
+  const doorRight = new THREE.Group();
+  doorRight.position.set(0.5, 0, 0.61);
+  wardrobe.add(doorRight);
+  const door2 = addTo(doorRight, new THREE.Mesh(new THREE.BoxGeometry(1.0, 3.0, 0.08), M.woodDark));
+  door2.position.set(-0.5, 1.6, 0);
+  // Mirror inside front
+  addTo(wardrobe, new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.2, 0.02), M.mirror)).position.set(0, 1.4, 0.55);
+
+  // Clothes (hidden until wardrobe opens)
+  const clothes = new THREE.Group();
+  clothes.position.set(0, 1.6, 0.2);
+  wardrobe.add(clothes);
+  const dressMesh = addTo(clothes, new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.9, 12), M.dress));
+  dressMesh.position.set(-0.3, 0, 0.1);
+  dressMesh.visible = false;
+  const shirt = addTo(clothes, new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.1), M.dressTrim));
+  shirt.position.set(0.3, 0.2, 0.1);
+  shirt.visible = false;
+
+  // Chair
+  const chair = new THREE.Group();
+  chair.position.set(-1.6, 0, -0.6);
+  scene.add(chair);
+  addTo(chair, new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.1, 0.8), M.wood)).position.y = 0.5;
+  addTo(chair, new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.1), M.wood)).position.set(0, 0.95, -0.35);
+  [[-0.35, -0.35], [0.35, -0.35], [-0.35, 0.35], [0.35, 0.35]].forEach(([x, z]) => {
+    addTo(chair, new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), M.woodDark)).position.set(x, 0.25, z);
+  });
+
+  // Shelf
+  box(1.6, 0.1, 0.4, M.wood, 3.6, 2.6, -ROOM / 2 + 0.4);
+  box(0.4, 0.4, 0.3, M.book, 3.2, 2.85, -ROOM / 2 + 0.4);
+  box(0.3, 0.5, 0.3, M.book2, 3.8, 2.9, -ROOM / 2 + 0.4);
+
+  // Cat
+  const cat = new THREE.Group();
+  cat.position.set(1.8, 0, 2.6);
+  scene.add(cat);
+  addTo(cat, new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 12), M.catBody)).position.y = 0.35;
+  addTo(cat, new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 12), M.catBody)).position.set(0, 0.7, 0.2);
+  const ear1 = addTo(cat, new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 4), M.catDark));
+  ear1.position.set(-0.1, 0.9, 0.2);
+  const ear2 = addTo(cat, new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 4), M.catDark));
+  ear2.position.set(0.1, 0.9, 0.2);
+  const tail = addTo(cat, new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), M.catBody));
+  tail.position.set(0, 0.45, -0.35); tail.rotation.x = 0.8;
+  const catEyeL = addTo(cat, new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), M.eye)); catEyeL.position.set(-0.08, 0.75, 0.37);
+  const catEyeR = addTo(cat, new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), M.eye)); catEyeR.position.set(0.08, 0.75, 0.37);
+
+  // Plush (Stitch-like, original design)
+  const plush = new THREE.Group();
+  plush.position.set(3.4, 0, 0.6);
+  scene.add(plush);
+  addTo(plush, new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 14), M.plushBlue)).position.y = 0.45;
+  addTo(plush, new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 14), M.plushBlue)).position.set(0, 0.95, 0);
+  const plushEarL = addTo(plush, new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.45, 8), M.plushBlue));
+  plushEarL.position.set(-0.22, 1.3, 0); plushEarL.rotation.z = 0.35;
+  const plushEarR = addTo(plush, new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.45, 8), M.plushBlue));
+  plushEarR.position.set(0.22, 1.3, 0); plushEarR.rotation.z = -0.35;
+  addTo(plush, new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 10), M.plushFace)).position.set(0, 0.5, 0.33);
+  addTo(plush, new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), M.eye)).position.set(-0.1, 1.0, 0.25);
+  addTo(plush, new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), M.eye)).position.set(0.1, 1.0, 0.25);
+
+  // Floor cushion hints ignored; walls decorate
+  const plantPot = box(0.5, 0.6, 0.5, M.woodDark, 4.1, 0.3, 3.8);
+  const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.45, 12, 10), mat(0x6fd08c));
+  leaves.position.set(4.1, 1.0, 3.8); leaves.castShadow = true; scene.add(leaves);
+
+  // ---------- Character Sonder (anime style) ----------
+  const character = new THREE.Group();
+  scene.add(character);
+  const body = new THREE.Group();
+  character.add(body);
+
+  // Legs
+  const legL = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.5, 10), M.skin);
+  legL.position.set(-0.13, 0.25, 0); legL.castShadow = true;
+  const legR = legL.clone(); legR.position.x = 0.13;
+  body.add(legL, legR);
+  const shoeL = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), M.shoe);
+  shoeL.scale.set(1, 0.6, 1.4); shoeL.position.set(-0.13, 0.05, 0.05);
+  const shoeR = shoeL.clone(); shoeR.position.x = 0.13;
+  body.add(shoeL, shoeR);
+  // Skirt & dress
+  const skirt = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.45, 16, 1, true), M.skirt);
+  skirt.position.y = 0.65; skirt.castShadow = true;
+  body.add(skirt);
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry ? new THREE.CylinderGeometry(0.28, 0.22, 0.5, 14) : new THREE.CylinderGeometry(0.28, 0.22, 0.5, 14), M.dress);
+  torso.position.y = 1.0; torso.castShadow = true;
+  body.add(torso);
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.03, 8, 20), M.dressTrim);
+  collar.rotation.x = Math.PI / 2; collar.position.y = 1.25;
+  body.add(collar);
+  // Arms
+  const armL = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5, 10), M.skin);
+  armL.position.set(-0.36, 1.0, 0); armL.rotation.z = 0.2; armL.castShadow = true;
+  const armR = armL.clone(); armR.position.x = 0.36; armR.rotation.z = -0.2;
+  body.add(armL, armR);
+  // Head
+  const head = new THREE.Group();
+  head.position.y = 1.55;
+  body.add(head);
+  const face = new THREE.Mesh(new THREE.SphereGeometry(0.3, 24, 20), M.skin);
+  face.scale.set(1, 1.05, 0.95); face.castShadow = true;
+  head.add(face);
+  // Anime big eyes
+  const eyeWhiteL = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 12), mat(0xffffff));
+  eyeWhiteL.position.set(-0.12, -0.02, 0.24); eyeWhiteL.scale.set(1, 1.2, 0.5);
+  const eyeWhiteR = eyeWhiteL.clone(); eyeWhiteR.position.x = 0.12;
+  head.add(eyeWhiteL, eyeWhiteR);
+  const irisMat = mat(0x3a5cc8, { emissive: 0x1a2a66, emissiveIntensity: 0.3 });
+  const irisL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 10), irisMat);
+  irisL.position.set(-0.12, -0.02, 0.29); irisL.scale.set(1, 1.2, 0.5);
+  const irisR = irisL.clone(); irisR.position.x = 0.12;
+  head.add(irisL, irisR);
+  const pupilL = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), M.eye);
+  pupilL.position.set(-0.12, -0.02, 0.33);
+  const pupilR = pupilL.clone(); pupilR.position.x = 0.12;
+  head.add(pupilL, pupilR);
+  const shineL = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 6), mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 1 }));
+  shineL.position.set(-0.1, 0.02, 0.36);
+  const shineR = shineL.clone(); shineR.position.x = 0.14;
+  head.add(shineL, shineR);
+  // Blush
+  const blushL = new THREE.Mesh(new THREE.CircleGeometry(0.05, 12), M.blush);
+  blushL.position.set(-0.19, -0.12, 0.27); blushL.rotation.y = 0.3;
+  const blushR = blushL.clone(); blushR.position.x = 0.19; blushR.rotation.y = -0.3;
+  head.add(blushL, blushR);
+  // Hair: back volume, bangs, long side locks
+  const hairBack = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 20), M.hair);
+  hairBack.scale.set(1.05, 1.05, 1.0); hairBack.position.set(0, 0.03, -0.03); hairBack.castShadow = true;
+  head.add(hairBack);
+  const hairLong = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.18, 0.9, 20, 1, true), M.hair);
+  hairLong.position.set(0, -0.32, -0.12); hairLong.castShadow = true;
+  head.add(hairLong);
+  const lockL = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.03, 0.7, 10), M.hairLight);
+  lockL.position.set(-0.3, -0.25, 0.05); lockL.rotation.z = 0.15;
+  const lockR = lockL.clone(); lockR.position.x = 0.3; lockR.rotation.z = -0.15;
+  head.add(lockL, lockR);
+  const bangs = new THREE.Mesh(new THREE.SphereGeometry(0.32, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.45), M.hair);
+  bangs.position.set(0, 0.06, 0.02); bangs.rotation.x = -0.25;
+  head.add(bangs);
+  const bangLock = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.3, 8), M.hair);
+  bangLock.position.set(-0.18, 0.02, 0.26); bangLock.rotation.x = Math.PI; bangLock.rotation.z = 0.5;
+  head.add(bangLock);
+  const bangLock2 = bangLock.clone(); bangLock2.position.x = 0.18; bangLock2.rotation.z = -0.5;
+  head.add(bangLock2);
+  // Hair highlight streak
+  const streak = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.012, 6, 20, Math.PI), M.hairLight);
+  streak.position.set(0, 0.2, 0.2); streak.rotation.x = -0.5;
+  head.add(streak);
+
+  // Shadow blob under character
+  const shadowBlob = new THREE.Mesh(new THREE.CircleGeometry(0.45, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 }));
+  shadowBlob.rotation.x = -Math.PI / 2; shadowBlob.position.y = 0.03;
+  character.add(shadowBlob);
+
+  character.position.set(0, 0, 0);
+
+  // ---------- Game state ----------
+  const state = {
+    target: null,
+    pos: new THREE.Vector3(0, 0, 0),
+    speed: 2.6,
+    walking: false,
+    busy: null,          // 'sit' | 'sleep' | 'wardrobe' | 'wave' | null
+    busyTimer: 0,
+    wardrobeOpen: false,
+    wardrobeT: 0,
+    walkPhase: 0,
+    bubbleTimer: 0
+  };
+  const BOUND = ROOM / 2 - 0.7;
+
+  function say(text, ms = 2600) {
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(say._t);
+    say._t = setTimeout(() => bubble.classList.remove('show'), ms);
+  }
+
+  function clampPos(v) {
+    v.x = Math.max(-BOUND, Math.min(BOUND, v.x));
+    v.z = Math.max(-BOUND + 0.8, Math.min(BOUND, v.z));
+  }
+
+  // ---------- Interaction ----------
+  const ray = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  const interactables = [];
+
+  function screenToNDC(x, y) {
+    ndc.x = (x / window.innerWidth) * 2 - 1;
+    ndc.y = -(y / window.innerHeight) * 2 + 1;
+  }
+
+  function onTap(clientX, clientY) {
+    if (state.busy) { state.busy = null; }
+    screenToNDC(clientX, clientY);
+    ray.setFromCamera(ndc, camera);
+    const hits = ray.intersectObject(floor, false);
+    if (hits.length) {
+      const p = hits[0].point.clone();
+      clampPos(p);
+      state.target = p;
+      state.walking = true;
+      hint.style.opacity = 0;
+    }
+  }
+
+  let pointerDown = null;
+  renderer.domElement.addEventListener('pointerdown', (e) => {
+    pointerDown = { x: e.clientX, y: e.clientY, t: performance.now() };
+  });
+  renderer.domElement.addEventListener('pointerup', (e) => {
+    if (!pointerDown) return;
+    const dx = e.clientX - pointerDown.x, dy = e.clientY - pointerDown.y;
+    if (Math.hypot(dx, dy) < 12) onTap(e.clientX, e.clientY);
+    pointerDown = null;
+  });
+
+  // Action buttons
+  document.querySelectorAll('#actions button').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const act = btn.dataset.act;
+      if (act === 'sit') {
+        state.target = new THREE.Vector3(-1.6, 0, -0.6);
+        state.walking = true;
+        state.pendingAct = 'sit';
+      } else if (act === 'sleep') {
+        state.target = new THREE.Vector3(3.2, 0, -1.8);
+        state.walking = true;
+        state.pendingAct = 'sleep';
+      } else if (act === 'wardrobe') {
+        state.target = new THREE.Vector3(-2.8, 0, 1.8);
+        state.walking = true;
+        state.pendingAct = 'wardrobe';
+      } else if (act === 'wave') {
+        state.busy = 'wave'; state.busyTimer = 2.2;
+        say('سلام! من سوندر هستم.');
+      }
+    });
+  });
+
+  // Greeting on start
+  setTimeout(() => say('سلام، من سوندر هستم!', 3500), 600);
+
+  // ---------- Animation helpers ----------
+  function startPendingAction() {
+    const a = state.pendingAct;
+    state.pendingAct = null;
+    if (a === 'sit') {
+      state.busy = 'sit'; state.busyTimer = 999;
+      character.position.set(-1.6, 0, -0.6);
+      character.rotation.y = Math.PI;
+      say('اینجا بشینم بهتره.');
+    } else if (a === 'sleep') {
+      state.busy = 'sleep'; state.busyTimer = 999;
+      character.position.set(3.2, 0.55, -1.8);
+      character.rotation.set(-Math.PI / 2, 0, 0);
+      say('خیلی خسته‌ام... شب‌بخیر.', 3000);
+    } else if (a === 'wardrobe') {
+      state.wardrobeOpen = true;
+      state.busy = 'wardrobe'; state.busyTimer = 2.6;
+      say('یه لباس جدید انتخاب کنم.');
+    }
+  }
+
+  // ---------- Loop ----------
+  const clock = new THREE.Clock();
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), 0.05);
+    const t = clock.elapsedTime;
+
+    // Walking
+    if (state.walking && state.target) {
+      const toT = new THREE.Vector3().subVectors(state.target, character.position);
+      toT.y = 0;
+      const dist = toT.length();
+      if (dist < 0.08) {
+        state.walking = false;
+        character.position.x = state.target.x;
+        character.position.z = state.target.z;
+        if (state.pendingAct) startPendingAction();
+      } else {
+        toT.normalize();
+        const step = Math.min(dist, state.speed * dt);
+        character.position.addScaledVector(toT, step);
+        character.rotation.y = Math.atan2(toT.x, toT.z);
+        state.walkPhase += dt * 10;
+      }
+    }
+
+    // Walk animation (legs and arms swing)
+    const walkSwing = state.walking ? Math.sin(state.walkPhase) * 0.5 : 0;
+    legL.rotation.x = walkSwing; legR.rotation.x = -walkSwing;
+    armL.rotation.x = -walkSwing * 0.7; armR.rotation.x = walkSwing * 0.7;
+
+    // Idle breathing
+    if (!state.walking && !state.busy) {
+      body.position.y = Math.sin(t * 2) * 0.02;
+      head.rotation.z = Math.sin(t * 1.3) * 0.04;
+    }
+
+    // Busy actions
+    if (state.busy === 'wave') {
+      state.busyTimer -= dt;
+      armR.rotation.z = -2.4 + Math.sin(t * 10) * 0.3;
+      if (state.busyTimer <= 0) { state.busy = null; armR.rotation.z = -0.2; }
+    } else if (state.busy === 'sit') {
+      body.position.y = 0;
+      legL.rotation.x = -Math.PI / 2; legR.rotation.x = -Math.PI / 2;
+    } else if (state.busy === 'wardrobe') {
+      state.busyTimer -= dt;
+      if (state.busyTimer <= 0) {
+        state.busy = null;
+        state.wardrobeOpen = false;
+        clothes.children.forEach(c => c.visible = false);
+      }
+      if (state.busyTimer < 1.5) {
+        dressMesh.visible = true; shirt.visible = true;
+      }
+    } else if (state.busy === 'sleep') {
+      body.position.y = Math.sin(t * 1.5) * 0.01;
+    }
+
+    // Wardrobe door animation
+    const targetOpen = state.wardrobeOpen ? 1 : 0;
+    state.wardrobeT += (targetOpen - state.wardrobeT) * Math.min(1, dt * 6);
+    doorPivot.rotation.y = -state.wardrobeT * 1.8;
+    doorRight.rotation.y = state.wardrobeT * 1.8;
+
+    // Cat idle tail
+    tail.rotation.z = Math.sin(t * 2) * 0.2;
+
+    // Camera follow softly
+    const camTarget = new THREE.Vector3(character.position.x * 0.4, 1, character.position.z * 0.4);
+    camera.position.x += (camTarget.x * 0.5 - camera.position.x) * 0.05;
+    camera.lookAt(camTarget);
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // ---------- Resize ----------
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+})();
+</script>
+</body>
+</html>
